@@ -87,6 +87,494 @@ st.markdown("""
 # Configurações
 API_URL = "http://localhost:8990"
 CLAUDE_PROJECTS_PATH = Path("/home/suthub/.claude/projects")
+SESSION_NAMES_FILE = Path("/home/suthub/.claude/api-claude-code-viewer/session_names.json")
+PROJECT_NAMES_FILE = Path("/home/suthub/.claude/api-claude-code-viewer/project_names.json")
+
+# ============================================================================
+# 📁 SISTEMA DE ORGANIZAÇÃO DE PROJETOS
+# ============================================================================
+
+def load_project_names():
+    """Carrega nomes personalizados dos projetos do arquivo JSON"""
+    try:
+        if PROJECT_NAMES_FILE.exists():
+            with open(PROJECT_NAMES_FILE, 'r', encoding='utf-8') as f:
+                names = json.load(f)
+                if isinstance(names, dict):
+                    return names
+                else:
+                    add_debug_log("warning", "Arquivo project_names.json com formato inválido")
+        return {}
+    except Exception as e:
+        add_debug_log("error", f"Erro ao carregar nomes de projetos: {str(e)}")
+        return {}
+
+def save_project_names(names_dict):
+    """Salva nomes personalizados dos projetos no arquivo JSON"""
+    try:
+        PROJECT_NAMES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        if not isinstance(names_dict, dict):
+            raise ValueError("names_dict deve ser um dicionário")
+        
+        # Backup do arquivo existente
+        if PROJECT_NAMES_FILE.exists():
+            backup_file = PROJECT_NAMES_FILE.with_suffix('.json.backup')
+            import shutil
+            shutil.copy2(PROJECT_NAMES_FILE, backup_file)
+        
+        with open(PROJECT_NAMES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(names_dict, f, ensure_ascii=False, indent=2)
+        
+        add_debug_log("info", f"Nomes de projetos salvos: {len(names_dict)} entradas")
+        return True
+    except Exception as e:
+        add_debug_log("error", f"Erro ao salvar nomes de projetos: {str(e)}")
+        return False
+
+def clean_project_name(directory_name):
+    """Gera nome amigável automático para diretório baseado em padrões"""
+    try:
+        # Remover prefixos comuns
+        name = directory_name
+        
+        # Remover "-home-suthub--claude-"
+        if name.startswith("-home-suthub--claude-"):
+            name = name[21:]  # Remove o prefixo
+        elif name.startswith("-home-suthub--"):
+            name = name[14:]  # Remove prefixo genérico
+        
+        # Substituir hífens por espaços e capitalizar
+        name = name.replace("-", " ")
+        name = name.replace("  ", " ")  # Remover espaços duplos
+        
+        # Capitalizar palavras importantes
+        words = name.split()
+        cleaned_words = []
+        for word in words:
+            if word.lower() in ['api', 'sdk', 'app', 'code', 'chat', 'claude', 'viewer']:
+                cleaned_words.append(word.upper())
+            else:
+                cleaned_words.append(word.capitalize())
+        
+        result = " ".join(cleaned_words)
+        
+        # Casos especiais
+        result = result.replace("Api", "API").replace("Sdk", "SDK").replace("App", "APP")
+        
+        return result if result else directory_name
+        
+    except Exception:
+        return directory_name  # Fallback seguro
+
+def get_project_display_name(directory_name, custom_names=None):
+    """Obtém nome de exibição do projeto (personalizado ou limpo)"""
+    if custom_names is None:
+        custom_names = load_project_names()
+    
+    if directory_name in custom_names:
+        custom_name = custom_names[directory_name]
+        return f"📁 {custom_name}"
+    
+    # Usar limpeza automática como fallback
+    clean_name = clean_project_name(directory_name)
+    return f"📂 {clean_name}"
+
+def set_project_custom_name(directory_name, custom_name):
+    """Define nome personalizado para um projeto"""
+    try:
+        # Validar nome (usando mesma validação de sessões)
+        is_valid, result = validate_session_name(custom_name)
+        if not is_valid:
+            return False, result
+        
+        clean_name = result
+        
+        # Carregar nomes existentes
+        names = load_project_names()
+        
+        # Verificar se nome já existe para outro projeto
+        for dirname, name in names.items():
+            if dirname != directory_name and name.lower() == clean_name.lower():
+                return False, f"Nome '{clean_name}' já usado por outro projeto"
+        
+        # Atualizar ou adicionar nome
+        names[directory_name] = clean_name
+        
+        # Salvar
+        if save_project_names(names):
+            add_debug_log("info", f"Nome de projeto definido: {directory_name} -> '{clean_name}'")
+            return True, clean_name
+        else:
+            return False, "Erro ao salvar nome do projeto"
+            
+    except Exception as e:
+        add_debug_log("error", f"Erro ao definir nome do projeto: {str(e)}")
+        return False, f"Erro interno: {str(e)}"
+
+# ============================================================================
+# 🏷️ SISTEMA DE NOMES PERSONALIZADOS PARA SESSÕES
+# ============================================================================
+
+def load_session_names():
+    """Carrega nomes personalizados das sessões do arquivo JSON"""
+    try:
+        if SESSION_NAMES_FILE.exists():
+            with open(SESSION_NAMES_FILE, 'r', encoding='utf-8') as f:
+                names = json.load(f)
+                # Validar estrutura do arquivo
+                if isinstance(names, dict):
+                    return names
+                else:
+                    add_debug_log("warning", "Arquivo session_names.json com formato inválido, criando novo")
+        return {}
+    except Exception as e:
+        add_debug_log("error", f"Erro ao carregar nomes de sessões: {str(e)}")
+        return {}
+
+def save_session_names(names_dict):
+    """Salva nomes personalizados das sessões no arquivo JSON"""
+    try:
+        # Criar diretório pai se não existir
+        SESSION_NAMES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Validar dados antes de salvar
+        if not isinstance(names_dict, dict):
+            raise ValueError("names_dict deve ser um dicionário")
+        
+        # Backup do arquivo existente
+        if SESSION_NAMES_FILE.exists():
+            backup_file = SESSION_NAMES_FILE.with_suffix('.json.backup')
+            import shutil
+            shutil.copy2(SESSION_NAMES_FILE, backup_file)
+        
+        # Salvar com indentação para legibilidade
+        with open(SESSION_NAMES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(names_dict, f, ensure_ascii=False, indent=2)
+        
+        add_debug_log("info", f"Nomes de sessões salvos: {len(names_dict)} entradas")
+        return True
+    except Exception as e:
+        add_debug_log("error", f"Erro ao salvar nomes de sessões: {str(e)}")
+        return False
+
+def validate_session_name(name):
+    """Valida nome de sessão para garantir segurança e compatibilidade"""
+    if not name or not isinstance(name, str):
+        return False, "Nome deve ser uma string não vazia"
+    
+    # Limpar espaços em branco
+    name = name.strip()
+    
+    if len(name) == 0:
+        return False, "Nome não pode estar vazio"
+    
+    if len(name) > 100:
+        return False, "Nome muito longo (máximo 100 caracteres)"
+    
+    # Caracteres proibidos (que podem causar problemas)
+    forbidden_chars = ['<', '>', '"', "'", '&', '\\', '/', '|', ':', '*', '?']
+    for char in forbidden_chars:
+        if char in name:
+            return False, f"Caractere '{char}' não permitido"
+    
+    # Nomes reservados
+    reserved_names = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 
+                     'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 
+                     'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9']
+    if name.upper() in reserved_names:
+        return False, "Nome reservado do sistema"
+    
+    return True, name.strip()
+
+def get_session_display_name(session_id, custom_names=None):
+    """Obtém nome de exibição da sessão (personalizado ou UUID)"""
+    if custom_names is None:
+        custom_names = load_session_names()
+    
+    if session_id in custom_names:
+        custom_name = custom_names[session_id]
+        # Adicionar indicador visual de nome personalizado
+        return f"🏷️ {custom_name}"
+    
+    # Mostrar UUID truncado para melhor UX
+    return f"📋 {session_id[:8]}...{session_id[-4:]}"
+
+def set_session_custom_name(session_id, custom_name):
+    """Define nome personalizado para uma sessão"""
+    try:
+        # Validar nome
+        is_valid, result = validate_session_name(custom_name)
+        if not is_valid:
+            return False, result
+        
+        clean_name = result
+        
+        # Carregar nomes existentes
+        names = load_session_names()
+        
+        # Verificar se nome já existe para outra sessão
+        for sid, name in names.items():
+            if sid != session_id and name.lower() == clean_name.lower():
+                return False, f"Nome '{clean_name}' já usado por outra sessão"
+        
+        # Atualizar ou adicionar nome
+        names[session_id] = clean_name
+        
+        # Salvar
+        if save_session_names(names):
+            add_debug_log("info", f"Nome personalizado definido: {session_id[:8]} -> '{clean_name}'")
+            return True, clean_name
+        else:
+            return False, "Erro ao salvar nome personalizado"
+            
+    except Exception as e:
+        add_debug_log("error", f"Erro ao definir nome personalizado: {str(e)}")
+        return False, f"Erro interno: {str(e)}"
+
+def remove_session_custom_name(session_id):
+    """Remove nome personalizado de uma sessão"""
+    try:
+        names = load_session_names()
+        
+        if session_id in names:
+            old_name = names.pop(session_id)
+            if save_session_names(names):
+                add_debug_log("info", f"Nome personalizado removido: {session_id[:8]} (era '{old_name}')")
+                return True, f"Nome '{old_name}' removido"
+            else:
+                return False, "Erro ao salvar alterações"
+        else:
+            return True, "Sessão já usa nome padrão"
+            
+    except Exception as e:
+        add_debug_log("error", f"Erro ao remover nome personalizado: {str(e)}")
+        return False, f"Erro interno: {str(e)}"
+
+def cleanup_orphaned_session_names():
+    """Remove nomes de sessões que não existem mais (CRUD - limpeza automática)"""
+    try:
+        session_names = load_session_names()
+        
+        if not session_names:
+            return 0, []  # Nenhuma limpeza necessária
+        
+        # Obter lista de sessões reais que existem
+        existing_sessions = set()
+        if CLAUDE_PROJECTS_PATH.exists():
+            for project_dir in CLAUDE_PROJECTS_PATH.iterdir():
+                if project_dir.is_dir():
+                    for session_file in project_dir.glob("*.jsonl"):
+                        existing_sessions.add(session_file.stem)
+        
+        # Identificar nomes órfãos
+        orphaned_names = []
+        cleaned_names = session_names.copy()
+        
+        for session_id, custom_name in session_names.items():
+            if session_id not in existing_sessions:
+                orphaned_names.append({
+                    'session_id': session_id,
+                    'custom_name': custom_name
+                })
+                cleaned_names.pop(session_id)
+        
+        # Salvar versão limpa se houve mudanças
+        if orphaned_names:
+            if save_session_names(cleaned_names):
+                add_debug_log("info", f"Limpeza de nomes órfãos: {len(orphaned_names)} removidos", {
+                    "removed_names": orphaned_names,
+                    "remaining_names": len(cleaned_names)
+                })
+                return len(orphaned_names), orphaned_names
+            else:
+                add_debug_log("error", "Erro ao salvar limpeza de nomes órfãos")
+                return 0, []
+        
+        return 0, []  # Nenhuma limpeza necessária
+        
+    except Exception as e:
+        add_debug_log("error", f"Erro na limpeza de nomes órfãos: {str(e)}")
+        return 0, []
+
+def cleanup_orphaned_project_names():
+    """Remove nomes de projetos que não existem mais (CRUD - limpeza automática)"""
+    try:
+        project_names = load_project_names()
+        
+        if not project_names:
+            return 0, []
+        
+        # Obter lista de projetos reais que existem
+        existing_projects = set()
+        if CLAUDE_PROJECTS_PATH.exists():
+            for project_dir in CLAUDE_PROJECTS_PATH.iterdir():
+                if project_dir.is_dir():
+                    existing_projects.add(project_dir.name)
+        
+        # Identificar nomes órfãos
+        orphaned_names = []
+        cleaned_names = project_names.copy()
+        
+        for project_dir, custom_name in project_names.items():
+            if project_dir not in existing_projects:
+                orphaned_names.append({
+                    'project_dir': project_dir,
+                    'custom_name': custom_name
+                })
+                cleaned_names.pop(project_dir)
+        
+        # Salvar versão limpa se houve mudanças
+        if orphaned_names:
+            if save_project_names(cleaned_names):
+                add_debug_log("info", f"Limpeza de projetos órfãos: {len(orphaned_names)} removidos", {
+                    "removed_projects": orphaned_names,
+                    "remaining_projects": len(cleaned_names)
+                })
+                return len(orphaned_names), orphaned_names
+            else:
+                add_debug_log("error", "Erro ao salvar limpeza de projetos órfãos")
+                return 0, []
+        
+        return 0, []
+        
+    except Exception as e:
+        add_debug_log("error", f"Erro na limpeza de projetos órfãos: {str(e)}")
+        return 0, []
+
+def perform_full_cleanup():
+    """Executa limpeza completa do sistema (CRUD - manutenção)"""
+    try:
+        # Limpeza de sessões órfãs
+        session_cleanup_count, session_orphans = cleanup_orphaned_session_names()
+        
+        # Limpeza de projetos órfãos  
+        project_cleanup_count, project_orphans = cleanup_orphaned_project_names()
+        
+        total_cleaned = session_cleanup_count + project_cleanup_count
+        
+        cleanup_report = {
+            "total_items_cleaned": total_cleaned,
+            "sessions_cleaned": session_cleanup_count,
+            "projects_cleaned": project_cleanup_count,
+            "session_orphans": session_orphans,
+            "project_orphans": project_orphans,
+            "cleanup_timestamp": datetime.now().isoformat()
+        }
+        
+        add_debug_log("info", f"Limpeza automática executada: {total_cleaned} itens removidos", cleanup_report)
+        
+        return True, cleanup_report
+        
+    except Exception as e:
+        add_debug_log("error", f"Erro na limpeza completa: {str(e)}")
+        return False, {"error": str(e)}
+
+def generate_session_name_with_claude(session_id, session_info):
+    """Gera nome inteligente para sessão usando Claude Code SDK"""
+    try:
+        # Carregar conteúdo da sessão
+        file_path = Path(session_info.get('file_path', ''))
+        if not file_path.exists():
+            add_debug_log("error", f"Arquivo de sessão não encontrado: {file_path}")
+            return None
+        
+        # Ler mensagens da sessão
+        messages = []
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        data = json.loads(line.strip())
+                        if data.get('type') == 'user':
+                            content = data.get('message', {}).get('content', '')
+                            if content:
+                                messages.append(f"User: {content}")
+                        elif data.get('type') == 'assistant':
+                            content = data.get('content', '')
+                            if content:
+                                # Limitar tamanho para não sobrecarregar
+                                messages.append(f"Assistant: {content[:500]}...")
+                    except json.JSONDecodeError:
+                        continue
+        
+        if not messages:
+            add_debug_log("warning", "Nenhuma mensagem encontrada na sessão")
+            return None
+        
+        # Criar prompt para Claude gerar nome
+        conversation_sample = "\n".join(messages[:10])  # Apenas primeiras 10 mensagens
+        
+        prompt = f"""Analise esta conversa e crie um nome curto e descritivo (máximo 50 caracteres) que capture o tema principal:
+
+{conversation_sample}
+
+Responda APENAS com o nome sugerido, sem explicações. O nome deve ser:
+- Descritivo do assunto principal
+- Máximo 50 caracteres
+- Sem caracteres especiais problemáticos
+- Em português brasileiro
+- Conciso e claro
+
+Exemplo de bons nomes:
+- "Implementação de API REST"
+- "Debug do sistema de login" 
+- "Configuração Docker"
+- "Análise de performance"
+
+Nome sugerido:"""
+
+        # Usar API Claude para gerar nome
+        try:
+            payload = {
+                "content": prompt,
+                "summary_type": "conciso"
+            }
+            
+            response = requests.post(
+                f"{API_URL}/api/summarize-custom",
+                json=payload,
+                timeout=30,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('success'):
+                    suggested_name = result.get('summary', '').strip()
+                    
+                    # Limpar o nome sugerido
+                    # Remover possíveis prefixos explicativos
+                    if ':' in suggested_name:
+                        suggested_name = suggested_name.split(':')[-1].strip()
+                    if '"' in suggested_name:
+                        suggested_name = suggested_name.strip('"')
+                    
+                    # Validar nome gerado
+                    is_valid, clean_name = validate_session_name(suggested_name)
+                    if is_valid and len(clean_name) <= 50:
+                        add_debug_log("info", f"Nome gerado por IA: '{clean_name}' para sessão {session_id[:8]}")
+                        return clean_name
+                    else:
+                        add_debug_log("warning", f"Nome gerado inválido: '{suggested_name}'")
+                        return None
+                        
+                else:
+                    add_debug_log("error", f"Erro na API: {result.get('error', 'Desconhecido')}")
+                    return None
+            else:
+                add_debug_log("error", f"Erro HTTP na geração de nome: {response.status_code}")
+                return None
+                
+        except requests.RequestException as e:
+            add_debug_log("error", f"Erro de conexão ao gerar nome: {str(e)}")
+            return None
+            
+    except Exception as e:
+        add_debug_log("error", f"Erro ao gerar nome com Claude: {str(e)}")
+        return None
+
+# ============================================================================
 
 def sanitize_html_text(text):
     """Sanitiza texto para evitar problemas de renderização HTML"""
@@ -198,7 +686,15 @@ def get_available_sessions_direct():
         return sessions
 
 def get_available_sessions():
-    """Obtém lista de sessões disponíveis via acesso direto"""
+    """Obtém lista de sessões disponíveis via acesso direto com limpeza automática"""
+    # Executar limpeza automática a cada carregamento (CRUD)
+    try:
+        cleanup_count, orphans = cleanup_orphaned_session_names()
+        if cleanup_count > 0:
+            add_debug_log("info", f"Limpeza automática: {cleanup_count} nomes órfãos removidos")
+    except Exception as e:
+        add_debug_log("warning", f"Erro na limpeza automática: {str(e)}")
+    
     return get_available_sessions_direct()
 
 def get_session_details_direct(directory: str, session_id: str):
@@ -509,6 +1005,95 @@ def main():
             st.metric("Logs em Memória", len(st.session_state.debug_logs))
             st.metric("Testes Executados", len(st.session_state.test_results))
             
+            # 📁 Gerenciamento de Projetos
+            st.subheader("📁 Organização de Projetos")
+            
+            # Listar projetos disponíveis
+            if CLAUDE_PROJECTS_PATH.exists():
+                available_projects = [d.name for d in CLAUDE_PROJECTS_PATH.iterdir() if d.is_dir()]
+                project_custom_names = load_project_names()
+                
+                # Estatísticas rápidas
+                st.metric("Total de Projetos", len(available_projects))
+                st.metric("Projetos Renomeados", len(project_custom_names))
+                
+                # Seletor de projeto para renomear
+                if available_projects:
+                    project_to_rename = st.selectbox(
+                        "Selecionar projeto para renomear:",
+                        available_projects,
+                        format_func=lambda x: get_project_display_name(x, project_custom_names)
+                    )
+                    
+                    if st.button("📁 Renomear Projeto Selecionado", key="rename_project_btn", use_container_width=True):
+                        st.session_state.show_project_rename_modal = True
+                        st.session_state.project_to_rename = project_to_rename
+                    
+                    # Mostrar preview dos nomes limpos
+                    with st.expander("👀 Preview dos Nomes Automáticos"):
+                        for proj in available_projects[:5]:  # Mostrar apenas 5 para não sobrecarregar
+                            original = proj
+                            cleaned = clean_project_name(proj)
+                            custom = project_custom_names.get(proj, "")
+                            
+                            if custom:
+                                st.write(f"📁 **{custom}** (personalizado)")
+                            else:
+                                st.write(f"📂 **{cleaned}** (auto)")
+                            st.caption(f"Original: `{original}`")
+                            st.markdown("---")
+            
+            # 🧹 Sistema CRUD - Manutenção
+            st.subheader("🧹 Manutenção do Sistema")
+            
+            # Estatísticas de limpeza
+            session_names_count = len(load_session_names())
+            project_names_count = len(load_project_names())
+            
+            col_stats1, col_stats2 = st.columns(2)
+            with col_stats1:
+                st.metric("Nomes de Sessões", session_names_count)
+            with col_stats2:
+                st.metric("Nomes de Projetos", project_names_count)
+            
+            # Botão de limpeza manual
+            if st.button("🧹 Executar Limpeza Completa", key="manual_cleanup", use_container_width=True, help="Remove nomes de sessões/projetos que não existem mais"):
+                with st.spinner("🧹 Executando limpeza automática..."):
+                    success, report = perform_full_cleanup()
+                    
+                    if success:
+                        total_cleaned = report['total_items_cleaned']
+                        
+                        if total_cleaned > 0:
+                            st.success(f"✅ Limpeza concluída: {total_cleaned} itens órfãos removidos")
+                            
+                            # Detalhes da limpeza
+                            if report['sessions_cleaned'] > 0:
+                                st.info(f"🏷️ Sessões limpas: {report['sessions_cleaned']}")
+                            if report['projects_cleaned'] > 0:
+                                st.info(f"📁 Projetos limpos: {report['projects_cleaned']}")
+                                
+                            # Mostrar itens removidos
+                            with st.expander("🔍 Ver Itens Removidos"):
+                                if report['session_orphans']:
+                                    st.write("**Sessões Órfãs Removidas:**")
+                                    for orphan in report['session_orphans']:
+                                        st.write(f"- `{orphan['session_id'][:8]}...` → '{orphan['custom_name']}'")
+                                
+                                if report['project_orphans']:
+                                    st.write("**Projetos Órfãos Removidos:**")
+                                    for orphan in report['project_orphans']:
+                                        st.write(f"- `{orphan['project_dir']}` → '{orphan['custom_name']}'")
+                                        
+                            st.rerun()
+                        else:
+                            st.info("✅ Sistema já está limpo - nenhum item órfão encontrado")
+                    else:
+                        st.error(f"❌ Erro na limpeza: {report.get('error', 'Desconhecido')}")
+            
+            # Informações sobre limpeza automática
+            st.caption("ℹ️ A limpeza automática roda toda vez que a lista de sessões é carregada")
+            
             # Configurações avançadas de sessão
             st.subheader("⚙️ Config de Sessão")
             
@@ -606,10 +1191,98 @@ def main():
             st.session_state.available_sessions = sessions
                 
             if sessions:
+                # Carregar nomes personalizados uma vez para performance
+                session_custom_names = load_session_names()
+                project_custom_names = load_project_names()
+                
+                # 🔍 Campo de busca melhorado
+                col_search, col_clear = st.columns([4, 1])
+                with col_search:
+                    search_term = st.text_input(
+                        "🔍 Buscar por projeto ou sessão:",
+                        placeholder="Digite nome do projeto, sessão ou UUID...",
+                        key="session_search"
+                    )
+                with col_clear:
+                    if st.button("🔄 Limpar", key="clear_search", use_container_width=True):
+                        st.session_state.session_search = ""
+                        st.rerun()
+                
+                # Filtrar sessões baseado na busca melhorada
+                filtered_sessions = sessions
+                if search_term:
+                    filtered_sessions = []
+                    search_lower = search_term.lower()
+                    for session in sessions:
+                        session_id = session['session_id']
+                        directory = session['directory']
+                        
+                        # Obter nomes amigáveis
+                        session_friendly_name = get_session_display_name(session_id, session_custom_names)
+                        project_friendly_name = get_project_display_name(directory, project_custom_names)
+                        
+                        # Buscar em múltiplos campos
+                        if (search_lower in session_friendly_name.lower() or 
+                            search_lower in project_friendly_name.lower() or
+                            search_lower in session_id.lower() or 
+                            search_lower in directory.lower()):
+                            filtered_sessions.append(session)
+                
+                # Mostrar contador de resultados
+                if search_term:
+                    st.caption(f"📊 {len(filtered_sessions)} de {len(sessions)} sessões encontradas")
+                
+                # 📊 Estatísticas por projeto
+                st.markdown("### 📊 Projetos")
+                project_stats = {}
+                for session in filtered_sessions:
+                    directory = session['directory']
+                    if directory not in project_stats:
+                        project_stats[directory] = {
+                            'count': 0,
+                            'last_activity': session.get('last_interaction', 'N/A')
+                        }
+                    project_stats[directory]['count'] += 1
+                    # Manter a atividade mais recente
+                    if session.get('last_interaction', '') > project_stats[directory]['last_activity']:
+                        project_stats[directory]['last_activity'] = session.get('last_interaction', 'N/A')
+                
+                # Exibir estatísticas em formato compacto
+                stats_data = []
+                for directory, stats in project_stats.items():
+                    project_display = get_project_display_name(directory, project_custom_names)
+                    stats_data.append({
+                        "📁 Projeto": project_display,
+                        "📊 Sessões": stats['count'],
+                        "📅 Última Atividade": stats['last_activity'][:16] if stats['last_activity'] != 'N/A' else 'N/A'
+                    })
+                
+                if stats_data:
+                    st.dataframe(stats_data, use_container_width=True, hide_index=True)
+                
+                st.markdown("### 📋 Selecionar Sessão")
+                
+                # Agrupar sessões por projeto para melhor organização
+                sessions_by_project = {}
+                for session in filtered_sessions[:50]:  # Aumentar limite para 50
+                    directory = session['directory']
+                    if directory not in sessions_by_project:
+                        sessions_by_project[directory] = []
+                    sessions_by_project[directory].append(session)
+                
+                # Criar opções com nomes limpos
                 session_options = []
-                for session in sessions[:20]:  # Limita a 20 para performance
-                    display_name = f"{session['directory']} | {session['session_id'][:8]}..."
-                    session_options.append((display_name, session))
+                for directory, project_sessions in sessions_by_project.items():
+                    # Nome limpo do projeto
+                    project_display = get_project_display_name(directory, project_custom_names)
+                    
+                    for session in project_sessions:
+                        session_id = session['session_id']
+                        session_display = get_session_display_name(session_id, session_custom_names)
+                        
+                        # Formato otimizado: "📁 Projeto | 🏷️ Sessão"
+                        display_name = f"{project_display} | {session_display}"
+                        session_options.append((display_name, session))
                     
                 selected_idx = st.selectbox(
                     "Selecionar Sessão:",
@@ -626,37 +1299,53 @@ def main():
                     
                     with col_action1:
                         if st.button("🗑️ Deletar", key="delete_selected_session", use_container_width=True, type="secondary"):
-                            # Deletar a sessão selecionada
+                            # Deletar a sessão diretamente do filesystem (debug viewer)
                             try:
-                                delete_url = f"{API_URL}/api/session/{selected_session['directory']}/{selected_session['session_id']}"
-                                delete_response = requests.delete(delete_url, timeout=10)
-                            
-                                if delete_response.status_code == 200:
-                                    st.success(f"✅ Sessão {selected_session['session_id'][:8]}... deletada!")
+                                file_path = Path(selected_session.get('file_path', ''))
+                                session_id = selected_session['session_id']
+                                
+                                if file_path.exists():
+                                    # Deletar arquivo físico
+                                    import os
+                                    os.remove(file_path)
+                                    
+                                    # Remover nome personalizado se existir
+                                    custom_names = load_session_names()
+                                    if session_id in custom_names:
+                                        old_name = custom_names.pop(session_id)
+                                        save_session_names(custom_names)
+                                        add_debug_log("info", f"Nome personalizado '{old_name}' removido junto com a sessão")
+                                    
+                                    st.success(f"✅ Sessão {session_id[:8]}... deletada permanentemente!")
                                     
                                     # Log da exclusão
-                                    add_debug_log("info", "Sessão deletada via seletor", {
-                                        "deleted_directory": selected_session['directory'],
-                                        "deleted_session_id": selected_session['session_id']
+                                    add_debug_log("info", "Sessão deletada (arquivo físico)", {
+                                        "deleted_file": str(file_path),
+                                        "deleted_session_id": session_id
                                     })
                                     
                                     # Limpar seleção atual e atualizar
                                     st.session_state.selected_session = None
                                     if 'last_generated_summary' in st.session_state:
                                         del st.session_state.last_generated_summary
+                                    time.sleep(0.5)
                                     st.rerun()
                                 else:
-                                    st.error(f"❌ Erro ao deletar: HTTP {delete_response.status_code}")
-                                    add_debug_log("error", f"Erro ao deletar sessão: HTTP {delete_response.status_code}")
+                                    st.error(f"❌ Arquivo não encontrado: {file_path}")
+                                    add_debug_log("error", f"Arquivo de sessão não encontrado: {file_path}")
                             
                             except Exception as e:
                                 st.error(f"❌ Erro na exclusão: {str(e)}")
                                 add_debug_log("error", f"Erro na exclusão da sessão: {str(e)}")
                     
                     with col_action2:
-                        # Link direto para o viewer web
-                        viewer_url = f"http://localhost:3041/{selected_session['directory']}/{selected_session['session_id']}"
-                        st.markdown(f"[🌐 Abrir Web]({viewer_url})", unsafe_allow_html=True)
+                        # 🏷️ Sistema de Renomeação de Sessão
+                        session_id = selected_session['session_id']
+                        
+                        # Botão para abrir modal de renomeação
+                        if st.button("🏷️ Renomear", key="rename_session_btn", use_container_width=True, type="primary"):
+                            st.session_state.show_rename_modal = True
+                            st.session_state.rename_session_id = session_id
                     
                     with col_action3:
                         if st.button("🔄 Recarregar", key="reload_session_data", use_container_width=True, type="secondary"):
@@ -799,26 +1488,34 @@ def main():
                                         
                                         if created_session:
                                             try:
-                                                # Fazer DELETE request para a API
-                                                delete_url = f"{API_URL}/api/session/{created_session['directory']}/{created_session['session_id']}"
-                                                delete_response = requests.delete(delete_url, timeout=10)
+                                                # Deletar arquivo físico diretamente
+                                                session_file = CLAUDE_PROJECTS_PATH / created_session['directory'] / f"{created_session['session_id']}.jsonl"
                                                 
-                                                if delete_response.status_code == 200:
-                                                    st.success(f"✅ Sessão {created_session['session_id'][:8]}... deletada permanentemente!")
+                                                if session_file.exists():
+                                                    import os
+                                                    os.remove(session_file)
+                                                    
+                                                    # Remover nome personalizado se existir
+                                                    custom_names = load_session_names()
+                                                    session_id = created_session['session_id']
+                                                    if session_id in custom_names:
+                                                        old_name = custom_names.pop(session_id)
+                                                        save_session_names(custom_names)
+                                                    
+                                                    st.success(f"✅ Sessão {session_id[:8]}... deletada permanentemente!")
                                                     
                                                     # Log da exclusão
-                                                    add_debug_log("info", "Sessão criada foi deletada permanentemente", {
-                                                        "deleted_directory": created_session['directory'],
-                                                        "deleted_session_id": created_session['session_id'],
-                                                        "delete_url": delete_url
+                                                    add_debug_log("info", "Sessão criada foi deletada (arquivo físico)", {
+                                                        "deleted_file": str(session_file),
+                                                        "deleted_session_id": session_id
                                                     })
                                                     
-                                                    # Remover da visualização também
+                                                    # Remover da visualização
                                                     del st.session_state.last_generated_summary
                                                     st.rerun()
                                                 else:
-                                                    st.error(f"❌ Erro ao deletar: HTTP {delete_response.status_code}")
-                                                    add_debug_log("error", f"Erro ao deletar sessão: HTTP {delete_response.status_code}")
+                                                    st.error(f"❌ Arquivo não encontrado: {session_file}")
+                                                    add_debug_log("error", f"Arquivo de sessão não encontrado: {session_file}")
                                             
                                             except Exception as e:
                                                 st.error(f"❌ Erro na exclusão: {str(e)}")
@@ -1261,5 +1958,163 @@ CONVERSA PARA ANÁLISE:
         else:
             st.info("📊 Execute alguns testes para ver métricas aqui")
 
+# 🏷️ Modal de Renomeação Global (fora de todas as estruturas de layout)
+def show_rename_modal():
+    """Exibe modal de renomeação fora da estrutura de colunas"""
+    if st.session_state.get('show_rename_modal', False):
+        session_id = st.session_state.get('rename_session_id', '')
+        if not session_id:
+            st.session_state.show_rename_modal = False
+            return
+            
+        custom_names = load_session_names()
+        current_name = custom_names.get(session_id, "")
+        
+        # Modal usando st.form para evitar problemas de aninhamento
+        st.markdown("---")
+        st.markdown("## 🏷️ Renomear Sessão")
+        
+        # Mostrar UUID atual
+        st.code(f"UUID: {session_id}", language="text")
+        
+        # Form para renomeação
+        with st.form("rename_form", clear_on_submit=False):
+            # Campo de input
+            new_name = st.text_input(
+                "📝 Nome personalizado:", 
+                value=current_name,
+                placeholder="Digite um nome descritivo...",
+                max_chars=100,
+                help="Máximo 100 caracteres, sem símbolos especiais"
+            )
+            
+            # Botões do form
+            submitted = st.form_submit_button("💾 Salvar Nome", use_container_width=True, type="primary")
+            
+            if submitted and new_name.strip():
+                is_valid, validation_result = validate_session_name(new_name.strip())
+                if is_valid:
+                    success, message = set_session_custom_name(session_id, validation_result)
+                    if success:
+                        st.success(f"✅ {message}")
+                        st.session_state.show_rename_modal = False
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {message}")
+                else:
+                    st.error(f"❌ {validation_result}")
+        
+        # Botões fora do form para outras ações
+        if st.button("🤖 Gerar Nome com Claude Code SDK", key="ai_generate_name", use_container_width=True):
+            with st.spinner("🤖 Analisando sessão..."):
+                sessions = get_available_sessions()
+                selected_session = None
+                for session in sessions:
+                    if session['session_id'] == session_id:
+                        selected_session = session
+                        break
+                
+                if selected_session:
+                    ai_name = generate_session_name_with_claude(session_id, selected_session)
+                    if ai_name:
+                        st.success(f"🤖 Nome sugerido: '{ai_name}'")
+                        # Definir o nome automaticamente
+                        success, message = set_session_custom_name(session_id, ai_name)
+                        if success:
+                            st.success(f"✅ Nome salvo automaticamente!")
+                            st.session_state.show_rename_modal = False
+                            time.sleep(1)
+                            st.rerun()
+                    else:
+                        st.error("❌ Não foi possível gerar nome")
+        
+        if current_name:
+            if st.button("↩️ Restaurar UUID Original", key="restore_uuid", use_container_width=True):
+                success, message = remove_session_custom_name(session_id)
+                if success:
+                    st.success(f"✅ {message}")
+                    st.session_state.show_rename_modal = False
+                    time.sleep(0.5)
+                    st.rerun()
+        
+        if st.button("❌ Cancelar", key="cancel_rename", use_container_width=True):
+            st.session_state.show_rename_modal = False
+            st.rerun()
+        
+        st.markdown("---")
+
+# 📁 Modal de Renomeação de Projetos
+def show_project_rename_modal():
+    """Modal para renomeação de projetos"""
+    if st.session_state.get('show_project_rename_modal', False):
+        project_dir = st.session_state.get('project_to_rename', '')
+        if not project_dir:
+            st.session_state.show_project_rename_modal = False
+            return
+            
+        project_custom_names = load_project_names()
+        current_name = project_custom_names.get(project_dir, "")
+        
+        st.markdown("---")
+        st.markdown("## 📁 Renomear Projeto")
+        
+        # Mostrar nome original
+        st.code(f"Diretório Original: {project_dir}", language="text")
+        
+        # Preview do nome automático
+        auto_name = clean_project_name(project_dir)
+        st.info(f"🤖 Nome Automático: **{auto_name}**")
+        
+        # Form para renomeação
+        with st.form("rename_project_form", clear_on_submit=False):
+            new_name = st.text_input(
+                "📝 Nome personalizado do projeto:", 
+                value=current_name,
+                placeholder=auto_name,  # Usar nome automático como placeholder
+                max_chars=100,
+                help="Deixe vazio para usar nome automático"
+            )
+            
+            submitted = st.form_submit_button("💾 Salvar Nome do Projeto", use_container_width=True, type="primary")
+            
+            if submitted:
+                final_name = new_name.strip() if new_name.strip() else auto_name
+                
+                is_valid, validation_result = validate_session_name(final_name)
+                if is_valid:
+                    success, message = set_project_custom_name(project_dir, validation_result)
+                    if success:
+                        st.success(f"✅ Projeto renomeado: '{validation_result}'")
+                        st.session_state.show_project_rename_modal = False
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {message}")
+                else:
+                    st.error(f"❌ {validation_result}")
+        
+        # Botões extras
+        if current_name and st.button("↩️ Usar Nome Automático", key="use_auto_name", use_container_width=True):
+            # Remove nome personalizado para usar automático
+            names = load_project_names()
+            if project_dir in names:
+                names.pop(project_dir)
+                save_project_names(names)
+            st.success(f"✅ Agora usando nome automático: '{auto_name}'")
+            st.session_state.show_project_rename_modal = False
+            time.sleep(0.5)
+            st.rerun()
+        
+        if st.button("❌ Cancelar", key="cancel_project_rename", use_container_width=True):
+            st.session_state.show_project_rename_modal = False
+            st.rerun()
+        
+        st.markdown("---")
+
 if __name__ == "__main__":
     main()
+    
+    # 🏷️ Modais de Renomeação no nível raiz (após main)
+    show_rename_modal()
+    show_project_rename_modal()
