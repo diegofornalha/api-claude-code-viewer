@@ -982,12 +982,6 @@ def main():
     """Interface principal de debug"""
     
     # Cabeçalho
-    st.markdown("""
-    <div style="background: linear-gradient(90deg, #28a745 0%, #20c997 100%); color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; text-align: center;">
-        <h1>🤖 Claude Chat API</h1>
-        <p>✅ Sistema Totalmente Funcional - Gerando Resumos com IA</p>
-    </div>
-    """, unsafe_allow_html=True)
     
     # Sidebar com controles
     with st.sidebar:
