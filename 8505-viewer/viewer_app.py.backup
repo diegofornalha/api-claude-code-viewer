@@ -473,22 +473,11 @@ def perform_full_cleanup():
 def generate_session_name_with_claude(session_id, session_info):
     """Gera nome inteligente para sessão usando Claude Code SDK"""
     try:
-        # Construir caminho do arquivo da sessão
-        directory = session_info.get('directory', '')
-        if not directory:
-            add_debug_log("error", "Diretório da sessão não encontrado")
-            return None
-            
-        file_path = CLAUDE_PROJECTS_PATH / directory / f"{session_id}.jsonl"
-        
+        # Carregar conteúdo da sessão
+        file_path = Path(session_info.get('file_path', ''))
         if not file_path.exists():
-            # Tentar caminho alternativo se disponível
-            alt_path = Path(session_info.get('file_path', ''))
-            if alt_path.exists():
-                file_path = alt_path
-            else:
-                add_debug_log("error", f"Arquivo de sessão não encontrado: {file_path}")
-                return None
+            add_debug_log("error", f"Arquivo de sessão não encontrado: {file_path}")
+            return None
         
         # Ler mensagens da sessão
         messages = []
@@ -516,19 +505,24 @@ def generate_session_name_with_claude(session_id, session_info):
         # Criar prompt para Claude gerar nome
         conversation_sample = "\n".join(messages[:10])  # Apenas primeiras 10 mensagens
         
-        prompt = f"""Baseado nesta conversa, responda APENAS com um nome descritivo de 20-40 caracteres:
+        prompt = f"""Analise esta conversa e crie um nome curto e descritivo (máximo 50 caracteres) que capture o tema principal:
 
 {conversation_sample}
 
-IMPORTANTE: Responda APENAS o nome, sem explicações, aspas ou formatação.
+Responda APENAS com o nome sugerido, sem explicações. O nome deve ser:
+- Descritivo do assunto principal
+- Máximo 50 caracteres
+- Sem caracteres especiais problemáticos
+- Em português brasileiro
+- Conciso e claro
 
-Exemplos de resposta adequada:
-Implementação API REST
-Debug sistema login
-Configuração Docker
-Análise performance
+Exemplo de bons nomes:
+- "Implementação de API REST"
+- "Debug do sistema de login" 
+- "Configuração Docker"
+- "Análise de performance"
 
-Nome:"""
+Nome sugerido:"""
 
         # Usar API Claude para gerar nome
         try:
@@ -549,26 +543,12 @@ Nome:"""
                 if result.get('success'):
                     suggested_name = result.get('summary', '').strip()
                     
-                    # Extrair nome da resposta do Claude
-                    # Procurar por padrões específicos
-                    import re
-                    
-                    # Tentar encontrar nome entre aspas
-                    quote_matches = re.findall(r'"([^"]{10,50})"', suggested_name)
-                    if quote_matches:
-                        suggested_name = quote_matches[-1]  # Pegar o último match
-                    
-                    # Se não encontrou, tentar extrair da última linha
-                    elif '\n' in suggested_name:
-                        lines = suggested_name.split('\n')
-                        for line in reversed(lines):
-                            line = line.strip()
-                            if line and len(line) <= 50 and not line.startswith('**'):
-                                suggested_name = line
-                                break
-                    
-                    # Limpar caracteres problemáticos
-                    suggested_name = suggested_name.strip('"\'*-• ').replace('**', '')
+                    # Limpar o nome sugerido
+                    # Remover possíveis prefixos explicativos
+                    if ':' in suggested_name:
+                        suggested_name = suggested_name.split(':')[-1].strip()
+                    if '"' in suggested_name:
+                        suggested_name = suggested_name.strip('"')
                     
                     # Validar nome gerado
                     is_valid, clean_name = validate_session_name(suggested_name)
@@ -960,12 +940,6 @@ def main():
     """Interface principal de debug"""
     
     # Cabeçalho
-    st.markdown("""
-    <div style="background: linear-gradient(90deg, #28a745 0%, #20c997 100%); color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; text-align: center;">
-        <h1>🤖 Claude Chat API</h1>
-        <p>✅ Sistema Totalmente Funcional - Gerando Resumos com IA</p>
-    </div>
-    """, unsafe_allow_html=True)
     
     # Sidebar com controles
     with st.sidebar:
@@ -1191,8 +1165,9 @@ def main():
                 st.success(f"🎯 **{successful_tests} teste(s) executado(s) com sucesso!** Sistema funcionando perfeitamente.")
     
     # Tabs principais
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "🧪 Testes de Resumo", 
+        "📁 Sessões & Projetos",
         "📝 Logs de Debug", 
         "📊 Métricas"
     ])
@@ -1204,181 +1179,36 @@ def main():
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            st.subheader("📋 Sessões Disponíveis")
+            st.subheader("🧪 Área de Testes")
+            st.info("📋 Para gerenciar sessões e projetos, use a aba '📁 Sessões & Projetos'")
             
-            # Atualização automática da lista de sessões
-            sessions = get_available_sessions()
-            st.session_state.available_sessions = sessions
-                
-            if sessions:
-                # Carregar nomes personalizados uma vez para performance
-                session_custom_names = load_session_names()
-                project_custom_names = load_project_names()
-                
-                # 🔍 Campo de busca melhorado
-                col_search, col_clear = st.columns([4, 1])
-                with col_search:
-                    search_term = st.text_input(
-                        "🔍 Buscar por projeto ou sessão:",
-                        placeholder="Digite nome do projeto, sessão ou UUID...",
-                        key="session_search"
-                    )
-                with col_clear:
-                    if st.button("🔄 Limpar", key="clear_search", use_container_width=True):
-                        st.session_state.session_search = ""
-                        st.rerun()
-                
-                # Filtrar sessões baseado na busca melhorada
-                filtered_sessions = sessions
-                if search_term:
-                    filtered_sessions = []
-                    search_lower = search_term.lower()
-                    for session in sessions:
-                        session_id = session['session_id']
-                        directory = session['directory']
-                        
-                        # Obter nomes amigáveis
-                        session_friendly_name = get_session_display_name(session_id, session_custom_names)
-                        project_friendly_name = get_project_display_name(directory, project_custom_names)
-                        
-                        # Buscar em múltiplos campos
-                        if (search_lower in session_friendly_name.lower() or 
-                            search_lower in project_friendly_name.lower() or
-                            search_lower in session_id.lower() or 
-                            search_lower in directory.lower()):
-                            filtered_sessions.append(session)
-                
-                # Mostrar contador de resultados
-                if search_term:
-                    st.caption(f"📊 {len(filtered_sessions)} de {len(sessions)} sessões encontradas")
-                
-                # 📊 Estatísticas por projeto
-                st.markdown("### 📊 Projetos")
-                project_stats = {}
-                for session in filtered_sessions:
-                    directory = session['directory']
-                    if directory not in project_stats:
-                        project_stats[directory] = {
-                            'count': 0,
-                            'last_activity': session.get('last_interaction', 'N/A')
-                        }
-                    project_stats[directory]['count'] += 1
-                    # Manter a atividade mais recente
-                    if session.get('last_interaction', '') > project_stats[directory]['last_activity']:
-                        project_stats[directory]['last_activity'] = session.get('last_interaction', 'N/A')
-                
-                # Exibir estatísticas em formato compacto
-                stats_data = []
-                for directory, stats in project_stats.items():
-                    project_display = get_project_display_name(directory, project_custom_names)
-                    stats_data.append({
-                        "📁 Projeto": project_display,
-                        "📊 Sessões": stats['count'],
-                        "📅 Última Atividade": stats['last_activity'][:16] if stats['last_activity'] != 'N/A' else 'N/A'
-                    })
-                
-                if stats_data:
-                    st.dataframe(stats_data, use_container_width=True, hide_index=True)
-                
-                st.markdown("### 📋 Selecionar Sessão")
-                
-                # Agrupar sessões por projeto para melhor organização
-                sessions_by_project = {}
-                for session in filtered_sessions[:50]:  # Aumentar limite para 50
-                    directory = session['directory']
-                    if directory not in sessions_by_project:
-                        sessions_by_project[directory] = []
-                    sessions_by_project[directory].append(session)
-                
-                # Criar opções com nomes limpos
-                session_options = []
-                for directory, project_sessions in sessions_by_project.items():
-                    # Nome limpo do projeto
-                    project_display = get_project_display_name(directory, project_custom_names)
-                    
-                    for session in project_sessions:
-                        session_id = session['session_id']
-                        session_display = get_session_display_name(session_id, session_custom_names)
-                        
-                        # Formato otimizado: "📁 Projeto | 🏷️ Sessão"
-                        display_name = f"{project_display} | {session_display}"
-                        session_options.append((display_name, session))
-                    
+            # Seletor simplificado para testes
+            session_options = [(f"{s['directory'][:20]}... | {s['session_id'][:8]}...", s) for s in sessions[:10]]
+            
+            if session_options:
                 selected_idx = st.selectbox(
-                    "Selecionar Sessão:",
+                    "Selecionar sessão para testar:",
                     range(len(session_options)),
-                    format_func=lambda i: session_options[i][0] if session_options else "Nenhuma"
+                    format_func=lambda i: session_options[i][0],
+                    key="test_session_selector"
                 )
-                    
-                if session_options:
-                    st.session_state.selected_session = session_options[selected_idx][1]
-                    selected_session = session_options[selected_idx][1]
-                    
-                    # Botões de ação para a sessão selecionada
-                    col_action1, col_action2, col_action3 = st.columns(3)
-                    
-                    with col_action1:
-                        if st.button("🗑️ Deletar", key="delete_selected_session", use_container_width=True, type="secondary"):
-                            # Deletar a sessão diretamente do filesystem (debug viewer)
-                            try:
-                                file_path = Path(selected_session.get('file_path', ''))
-                                session_id = selected_session['session_id']
-                                
-                                if file_path.exists():
-                                    # Deletar arquivo físico
-                                    import os
-                                    os.remove(file_path)
-                                    
-                                    # Remover nome personalizado se existir
-                                    custom_names = load_session_names()
-                                    if session_id in custom_names:
-                                        old_name = custom_names.pop(session_id)
-                                        save_session_names(custom_names)
-                                        add_debug_log("info", f"Nome personalizado '{old_name}' removido junto com a sessão")
-                                    
-                                    st.success(f"✅ Sessão {session_id[:8]}... deletada permanentemente!")
-                                    
-                                    # Log da exclusão
-                                    add_debug_log("info", "Sessão deletada (arquivo físico)", {
-                                        "deleted_file": str(file_path),
-                                        "deleted_session_id": session_id
-                                    })
-                                    
-                                    # Limpar seleção atual e atualizar
-                                    st.session_state.selected_session = None
-                                    if 'last_generated_summary' in st.session_state:
-                                        del st.session_state.last_generated_summary
-                                    time.sleep(0.5)
-                                    st.rerun()
-                                else:
-                                    st.error(f"❌ Arquivo não encontrado: {file_path}")
-                                    add_debug_log("error", f"Arquivo de sessão não encontrado: {file_path}")
-                            
-                            except Exception as e:
-                                st.error(f"❌ Erro na exclusão: {str(e)}")
-                                add_debug_log("error", f"Erro na exclusão da sessão: {str(e)}")
-                    
-                    with col_action2:
-                        # 🏷️ Sistema de Renomeação de Sessão
-                        session_id = selected_session['session_id']
-                        
-                        # Botão para abrir modal de renomeação
-                        if st.button("🏷️ Renomear", key="rename_session_btn", use_container_width=True, type="primary"):
-                            st.session_state.show_rename_modal = True
-                            st.session_state.rename_session_id = session_id
-                    
-                    with col_action3:
-                        if st.button("🔄 Recarregar", key="reload_session_data", use_container_width=True, type="secondary"):
-                            # Forçar recarregamento dos dados da sessão
-                            st.rerun()
-                    
-                    
-                    # Carregar e exibir conteúdo da sessão para edição
-                    file_path = Path(selected_session.get('file_path', ''))
-                    
-                    # Carregar metadados da sessão
-                    if file_path.exists():
-                        try:
+                
+                st.session_state.selected_session = session_options[selected_idx][1]
+            else:
+                st.info("📋 Nenhuma sessão encontrada para testes")
+        
+        # Área de testes (coluna 2)
+        with col2:
+            st.subheader("🧪 Executar Testes")
+            
+            if st.session_state.get('selected_session'):
+                selected_session = st.session_state.selected_session
+                st.success(f"✅ Sessão selecionada: {selected_session['session_id'][:8]}...")
+            else:
+                st.info("👈 Selecione uma sessão na coluna ao lado para testar")
+    
+    # Tab 2: Sessões & Projetos  
+    with tab2:
                             with open(file_path, 'r', encoding='utf-8') as f:
                                 lines = f.readlines()
                             
@@ -1801,8 +1631,169 @@ CONVERSA PARA ANÁLISE:
             else:
                 st.info("📋 Selecione uma sessão para testar")
     
-    # Tab 2: Logs de Debug
+    # Tab 2: Sessões & Projetos
     with tab2:
+        st.header("📁 Gerenciamento de Sessões & Projetos")
+        
+        # Atualização automática da lista de sessões
+        sessions = get_available_sessions()
+        st.session_state.available_sessions = sessions
+            
+        if sessions:
+            # Carregar nomes personalizados uma vez para performance
+            session_custom_names = load_session_names()
+            project_custom_names = load_project_names()
+            
+            # 🔍 Campo de busca melhorado
+            col_search, col_clear = st.columns([4, 1])
+            with col_search:
+                search_term = st.text_input(
+                    "🔍 Buscar por projeto ou sessão:",
+                    placeholder="Digite nome do projeto, sessão ou UUID...",
+                    key="session_project_search"
+                )
+            with col_clear:
+                if st.button("🔄 Limpar", key="clear_project_search", use_container_width=True):
+                    st.session_state.session_project_search = ""
+                    st.rerun()
+            
+            # Filtrar sessões baseado na busca melhorada
+            filtered_sessions = sessions
+            if search_term:
+                filtered_sessions = []
+                search_lower = search_term.lower()
+                for session in sessions:
+                    session_id = session['session_id']
+                    directory = session['directory']
+                    
+                    # Obter nomes amigáveis
+                    session_friendly_name = get_session_display_name(session_id, session_custom_names)
+                    project_friendly_name = get_project_display_name(directory, project_custom_names)
+                    
+                    # Buscar em múltiplos campos
+                    if (search_lower in session_friendly_name.lower() or 
+                        search_lower in project_friendly_name.lower() or
+                        search_lower in session_id.lower() or 
+                        search_lower in directory.lower()):
+                        filtered_sessions.append(session)
+            
+            # Mostrar contador de resultados
+            if search_term:
+                st.caption(f"📊 {len(filtered_sessions)} de {len(sessions)} sessões encontradas")
+            
+            # 📊 Estatísticas por projeto
+            st.markdown("### 📊 Projetos")
+            project_stats = {}
+            for session in filtered_sessions:
+                directory = session['directory']
+                if directory not in project_stats:
+                    project_stats[directory] = {
+                        'count': 0,
+                        'last_activity': session.get('last_interaction', 'N/A')
+                    }
+                project_stats[directory]['count'] += 1
+                # Manter a atividade mais recente
+                if session.get('last_interaction', '') > project_stats[directory]['last_activity']:
+                    project_stats[directory]['last_activity'] = session.get('last_interaction', 'N/A')
+            
+            # Exibir estatísticas em formato compacto
+            stats_data = []
+            for directory, stats in project_stats.items():
+                project_display = get_project_display_name(directory, project_custom_names)
+                stats_data.append({
+                    "📁 Projeto": project_display,
+                    "📊 Sessões": stats['count'],
+                    "📅 Última Atividade": stats['last_activity'][:16] if stats['last_activity'] != 'N/A' else 'N/A'
+                })
+            
+            if stats_data:
+                st.dataframe(stats_data, use_container_width=True, hide_index=True)
+            
+            st.markdown("### 📋 Selecionar Sessão")
+            
+            # Agrupar sessões por projeto para melhor organização
+            sessions_by_project = {}
+            for session in filtered_sessions[:50]:  # Aumentar limite para 50
+                directory = session['directory']
+                if directory not in sessions_by_project:
+                    sessions_by_project[directory] = []
+                sessions_by_project[directory].append(session)
+            
+            # Criar opções com nomes limpos
+            session_options = []
+            for directory, project_sessions in sessions_by_project.items():
+                # Nome limpo do projeto
+                project_display = get_project_display_name(directory, project_custom_names)
+                
+                for session in project_sessions:
+                    session_id = session['session_id']
+                    session_display = get_session_display_name(session_id, session_custom_names)
+                    
+                    # Formato otimizado: "📁 Projeto | 🏷️ Sessão"
+                    display_name = f"{project_display} | {session_display}"
+                    session_options.append((display_name, session))
+                
+            selected_idx = st.selectbox(
+                "Selecionar Sessão:",
+                range(len(session_options)),
+                format_func=lambda i: session_options[i][0] if session_options else "Nenhuma"
+            )
+                
+            if session_options:
+                st.session_state.selected_session = session_options[selected_idx][1]
+                selected_session = session_options[selected_idx][1]
+                
+                # Botões de ação para a sessão selecionada
+                col_action1, col_action2, col_action3 = st.columns(3)
+                
+                with col_action1:
+                    if st.button("🗑️ Deletar", key="delete_selected_session_tab", use_container_width=True, type="secondary"):
+                        # Deletar sessão com CRUD automático
+                        try:
+                            session_id = selected_session['session_id']
+                            directory = selected_session['directory']
+                            
+                            # Construir caminho do arquivo
+                            file_path = CLAUDE_PROJECTS_PATH / directory / f"{session_id}.jsonl"
+                            
+                            if file_path.exists():
+                                # Deletar arquivo físico
+                                import os
+                                os.remove(file_path)
+                                
+                                st.success(f"✅ Sessão {session_id[:8]}... deletada permanentemente!")
+                                
+                                # Forçar limpeza imediata do sistema
+                                cleanup_count, orphans = cleanup_orphaned_session_names()
+                                if cleanup_count > 0:
+                                    st.info(f"🧹 Sistema CRUD: {cleanup_count} nome(s) órfão(s) removido(s) automaticamente")
+                                
+                                st.session_state.selected_session = None
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Arquivo não encontrado")
+                        except Exception as e:
+                            st.error(f"❌ Erro na exclusão: {str(e)}")
+                
+                with col_action2:
+                    # 🏷️ Sistema de Renomeação de Sessão
+                    session_id = selected_session['session_id']
+                    
+                    # Botão para abrir modal de renomeação
+                    if st.button("🏷️ Renomear", key="rename_session_btn_tab", use_container_width=True, type="primary"):
+                        st.session_state.show_rename_modal = True
+                        st.session_state.rename_session_id = session_id
+                
+                with col_action3:
+                    if st.button("🔄 Recarregar", key="reload_session_data_tab", use_container_width=True, type="secondary"):
+                        # Forçar recarregamento dos dados da sessão
+                        st.rerun()
+        else:
+            st.info("📋 Nenhuma sessão encontrada")
+    
+    # Tab 3: Logs de Debug
+    with tab3:
         st.header("📝 Logs de Debug")
         
         if not st.session_state.debug_mode:
@@ -1890,8 +1881,8 @@ CONVERSA PARA ANÁLISE:
         else:
             st.info("📋 Nenhum log de debug disponível")
     
-    # Tab 3: Métricas
-    with tab3:
+    # Tab 4: Métricas
+    with tab4:
         st.header("📊 Métricas de Performance")
         
         if st.session_state.test_results:
