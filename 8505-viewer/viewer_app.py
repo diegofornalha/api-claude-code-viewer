@@ -549,26 +549,42 @@ Nome:"""
                 if result.get('success'):
                     suggested_name = result.get('summary', '').strip()
                     
-                    # Extrair nome da resposta do Claude
-                    # Procurar por padrões específicos
+                    # Extrair nome da resposta do Claude - versão melhorada
                     import re
                     
-                    # Tentar encontrar nome entre aspas
+                    # 1. Tentar encontrar nome entre aspas
                     quote_matches = re.findall(r'"([^"]{10,50})"', suggested_name)
                     if quote_matches:
-                        suggested_name = quote_matches[-1]  # Pegar o último match
+                        suggested_name = quote_matches[-1]
                     
-                    # Se não encontrou, tentar extrair da última linha
+                    # 2. Se não encontrou aspas, tentar extrair da última linha não vazia
                     elif '\n' in suggested_name:
                         lines = suggested_name.split('\n')
                         for line in reversed(lines):
                             line = line.strip()
-                            if line and len(line) <= 50 and not line.startswith('**'):
+                            if line and len(line) <= 50 and not line.startswith('**') and not line.startswith('Nome'):
                                 suggested_name = line
                                 break
                     
+                    # 3. Se é uma resposta curta direta, usar ela mesma
+                    elif len(suggested_name) <= 50:
+                        pass  # Manter como está
+                    
+                    # 4. Se é muito longa, tentar extrair do início
+                    else:
+                        # Pegar primeira frase válida
+                        sentences = suggested_name.split('.')
+                        for sentence in sentences:
+                            clean_sentence = sentence.strip()
+                            if 10 <= len(clean_sentence) <= 50:
+                                suggested_name = clean_sentence
+                                break
+                    
                     # Limpar caracteres problemáticos
-                    suggested_name = suggested_name.strip('"\'*-• ').replace('**', '')
+                    suggested_name = suggested_name.strip('"\'*-• ').replace('**', '').replace('Nome:', '').strip()
+                    
+                    # Debug: mostrar nome extraído
+                    add_debug_log("debug", f"Nome extraído da resposta: '{suggested_name}'")
                     
                     # Validar nome gerado
                     is_valid, clean_name = validate_session_name(suggested_name)
@@ -576,7 +592,13 @@ Nome:"""
                         add_debug_log("info", f"Nome gerado por IA: '{clean_name}' para sessão {session_id[:8]}")
                         return clean_name
                     else:
-                        add_debug_log("warning", f"Nome gerado inválido: '{suggested_name}'")
+                        add_debug_log("warning", f"Nome gerado inválido: '{suggested_name}' - Motivo: {clean_name}")
+                        # Tentar usar uma versão simplificada
+                        simple_name = suggested_name[:40].strip()
+                        is_simple_valid, simple_clean = validate_session_name(simple_name)
+                        if is_simple_valid:
+                            add_debug_log("info", f"Usando nome simplificado: '{simple_clean}'")
+                            return simple_clean
                         return None
                         
                 else:
