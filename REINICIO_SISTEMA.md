@@ -129,6 +129,30 @@ O **reinício foi essencial** para:
 
 **Resultado**: Interface limpa, profissional e totalmente funcional, com todas as funcionalidades de organização, renomeação e CRUD operacionais.
 
+## 📁 Reorganização Final das Abas
+
+### Estrutura Final Implementada:
+1. **🧪 Testes de Resumo** - Funcionalidades de teste focadas
+2. **📝 Logs de Debug** - Logs técnicos e de sistema  
+3. **📊 Métricas** - Performance e estatísticas de testes
+4. **📁 Projetos** - Aba dedicada para gerenciamento completo
+
+### Migração da Seção Projetos:
+- **Removido da**: Tela inicial (interface principal)
+- **Movido para**: Aba dedicada "📁 Projetos" 
+- **Funcionalidades expandidas**:
+  - Cards expandíveis por projeto
+  - Lista detalhada de sessões por projeto
+  - Gerenciamento de renomeação centralizado
+  - Preview de nomes automáticos vs personalizados
+
+### Benefícios da Reorganização:
+- ✅ **Interface principal** mais limpa e focada
+- ✅ **Projetos** com espaço dedicado e funcionalidades expandidas
+- ✅ **Organização lógica** das funcionalidades por contexto
+- ✅ **Melhor experiência** de usuário com separação clara de responsabilidades
+
 ---
 *Relatório gerado em: 30/08/2025 - 18:48*  
+*Última atualização: 30/08/2025 - 22:26 (Reorganização de abas)*  
 *Sistema: Claude Code SDK + Streamlit Debug Interface*

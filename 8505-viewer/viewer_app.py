@@ -707,15 +707,37 @@ def get_available_sessions_direct():
                     if lines:
                         first_msg = lines[0]
                         last_msg = lines[-1]
+                        session_id = session_file.stem
                         
-                        sessions.append({
-                            'session_id': session_file.stem,
+                        session_data = {
+                            'session_id': session_id,
                             'directory': project_dir.name,
                             'message_count': len(lines),
                             'first_interaction': first_msg.get('timestamp', 'N/A'),
                             'last_interaction': last_msg.get('timestamp', 'N/A'),
                             'file_path': str(session_file)
-                        })
+                        }
+                        
+                        # 🤖 Geração automática de nome se não existir
+                        session_names = load_session_names()
+                        if session_id not in session_names and len(lines) >= 2:  # Só gerar se tiver pelo menos 2 mensagens
+                            try:
+                                add_debug_log("info", f"Gerando nome automático para nova sessão: {session_id[:8]}")
+                                auto_name = generate_session_name_with_claude(session_id, session_data)
+                                
+                                if auto_name:
+                                    # Salvar nome gerado automaticamente
+                                    success, message = set_session_custom_name(session_id, auto_name)
+                                    if success:
+                                        add_debug_log("info", f"Nome automático salvo: '{auto_name}' para {session_id[:8]}")
+                                    else:
+                                        add_debug_log("warning", f"Erro ao salvar nome automático: {message}")
+                                else:
+                                    add_debug_log("warning", f"Não foi possível gerar nome automático para {session_id[:8]}")
+                            except Exception as e:
+                                add_debug_log("error", f"Erro na geração automática de nome: {str(e)}")
+                        
+                        sessions.append(session_data)
                 except Exception as e:
                     add_debug_log("error", f"Erro ao processar {session_file}: {str(e)}")
                     
@@ -1207,10 +1229,11 @@ def main():
                 st.success(f"🎯 **{successful_tests} teste(s) executado(s) com sucesso!** Sistema funcionando perfeitamente.")
     
     # Tabs principais
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "🧪 Testes de Resumo", 
         "📝 Logs de Debug", 
-        "📊 Métricas"
+        "📊 Métricas",
+        "📁 Projetos"
     ])
     
     # Tab 1: Testes de Resumo
@@ -1268,33 +1291,6 @@ def main():
                 if search_term:
                     st.caption(f"📊 {len(filtered_sessions)} de {len(sessions)} sessões encontradas")
                 
-                # 📊 Estatísticas por projeto
-                st.markdown("### 📊 Projetos")
-                project_stats = {}
-                for session in filtered_sessions:
-                    directory = session['directory']
-                    if directory not in project_stats:
-                        project_stats[directory] = {
-                            'count': 0,
-                            'last_activity': session.get('last_interaction', 'N/A')
-                        }
-                    project_stats[directory]['count'] += 1
-                    # Manter a atividade mais recente
-                    if session.get('last_interaction', '') > project_stats[directory]['last_activity']:
-                        project_stats[directory]['last_activity'] = session.get('last_interaction', 'N/A')
-                
-                # Exibir estatísticas em formato compacto
-                stats_data = []
-                for directory, stats in project_stats.items():
-                    project_display = get_project_display_name(directory, project_custom_names)
-                    stats_data.append({
-                        "📁 Projeto": project_display,
-                        "📊 Sessões": stats['count'],
-                        "📅 Última Atividade": stats['last_activity'][:16] if stats['last_activity'] != 'N/A' else 'N/A'
-                    })
-                
-                if stats_data:
-                    st.dataframe(stats_data, use_container_width=True, hide_index=True)
                 
                 st.markdown("### 📋 Selecionar Sessão")
                 
@@ -1910,8 +1906,9 @@ CONVERSA PARA ANÁLISE:
     with tab3:
         st.header("📊 Métricas de Performance")
         
+        
+        # 📈 Métricas de Testes
         if st.session_state.test_results:
-            st.subheader("📈 Resumo dos Testes")
             
             # Métricas gerais
             total_tests = len(st.session_state.test_results)
@@ -1993,6 +1990,97 @@ CONVERSA PARA ANÁLISE:
             
         else:
             st.info("📊 Execute alguns testes para ver métricas aqui")
+    
+    # Tab 4: Projetos
+    with tab4:
+        st.header("📁 Gerenciamento de Projetos")
+        
+        # Carregar dados
+        sessions = get_available_sessions()
+        project_custom_names = load_project_names()
+        
+        if sessions:
+            # 📊 Estatísticas detalhadas por projeto
+            st.subheader("📊 Estatísticas por Projeto")
+            
+            project_stats = {}
+            for session in sessions:
+                directory = session['directory']
+                if directory not in project_stats:
+                    project_stats[directory] = {
+                        'count': 0,
+                        'last_activity': session.get('last_interaction', 'N/A'),
+                        'sessions': []
+                    }
+                project_stats[directory]['count'] += 1
+                project_stats[directory]['sessions'].append(session)
+                # Manter a atividade mais recente
+                if session.get('last_interaction', '') > project_stats[directory]['last_activity']:
+                    project_stats[directory]['last_activity'] = session.get('last_interaction', 'N/A')
+            
+            # Exibir estatísticas expandidas
+            for directory, stats in project_stats.items():
+                project_display = get_project_display_name(directory, project_custom_names)
+                
+                # Card expandível para cada projeto
+                with st.expander(f"{project_display} ({stats['count']} sessões)", expanded=False):
+                    
+                    col_info1, col_info2 = st.columns(2)
+                    with col_info1:
+                        st.metric("Total de Sessões", stats['count'])
+                    with col_info2:
+                        st.metric("Última Atividade", stats['last_activity'][:16] if stats['last_activity'] != 'N/A' else 'N/A')
+                    
+                    # Mostrar diretório original
+                    st.code(f"Diretório: {directory}")
+                    
+                    # Listar sessões do projeto com nomes amigáveis
+                    st.write("**Sessões neste projeto:**")
+                    session_custom_names = load_session_names()
+                    
+                    for session in stats['sessions'][:10]:  # Mostrar até 10 sessões
+                        session_id = session['session_id']
+                        session_display = get_session_display_name(session_id, session_custom_names)
+                        st.write(f"• {session_display}")
+                    
+                    if len(stats['sessions']) > 10:
+                        st.caption(f"... e mais {len(stats['sessions']) - 10} sessões")
+            
+            # 🏷️ Gerenciamento de Nomes de Projetos
+            st.markdown("---")
+            st.subheader("🏷️ Renomear Projetos")
+            
+            # Lista todos os projetos disponíveis
+            available_projects = list(project_stats.keys())
+            
+            if available_projects:
+                project_to_rename = st.selectbox(
+                    "Selecionar projeto para renomear:",
+                    available_projects,
+                    format_func=lambda x: get_project_display_name(x, project_custom_names),
+                    key="project_rename_selector"
+                )
+                
+                if st.button("📁 Renomear Projeto Selecionado", key="rename_project_tab", use_container_width=True):
+                    st.session_state.show_project_rename_modal = True
+                    st.session_state.project_to_rename = project_to_rename
+                
+                # Preview dos nomes automáticos
+                with st.expander("👀 Preview dos Nomes Automáticos"):
+                    for proj in available_projects:
+                        original = proj
+                        cleaned = clean_project_name(proj)
+                        custom = project_custom_names.get(proj, "")
+                        
+                        if custom:
+                            st.write(f"📁 **{custom}** (personalizado)")
+                        else:
+                            st.write(f"📂 **{cleaned}** (automático)")
+                        st.caption(f"Original: `{original}`")
+                        if proj != available_projects[-1]:
+                            st.markdown("---")
+        else:
+            st.info("📋 Nenhum projeto encontrado")
 
 # 🏷️ Modal de Renomeação Global (fora de todas as estruturas de layout)
 def show_rename_modal():
