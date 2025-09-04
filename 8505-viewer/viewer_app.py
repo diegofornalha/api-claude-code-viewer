@@ -718,25 +718,6 @@ def get_available_sessions_direct():
                             'file_path': str(session_file)
                         }
                         
-                        # 🤖 Geração automática de nome se não existir
-                        session_names = load_session_names()
-                        if session_id not in session_names and len(lines) >= 2:  # Só gerar se tiver pelo menos 2 mensagens
-                            try:
-                                add_debug_log("info", f"Gerando nome automático para nova sessão: {session_id[:8]}")
-                                auto_name = generate_session_name_with_claude(session_id, session_data)
-                                
-                                if auto_name:
-                                    # Salvar nome gerado automaticamente
-                                    success, message = set_session_custom_name(session_id, auto_name)
-                                    if success:
-                                        add_debug_log("info", f"Nome automático salvo: '{auto_name}' para {session_id[:8]}")
-                                    else:
-                                        add_debug_log("warning", f"Erro ao salvar nome automático: {message}")
-                                else:
-                                    add_debug_log("warning", f"Não foi possível gerar nome automático para {session_id[:8]}")
-                            except Exception as e:
-                                add_debug_log("error", f"Erro na geração automática de nome: {str(e)}")
-                        
                         sessions.append(session_data)
                 except Exception as e:
                     add_debug_log("error", f"Erro ao processar {session_file}: {str(e)}")
